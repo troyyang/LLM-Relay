@@ -1,4 +1,9 @@
-use std::{env, error::Error, path::PathBuf, process::Command as ProcessCommand};
+use std::{
+    env,
+    error::Error,
+    path::{Path, PathBuf},
+    process::Command as ProcessCommand,
+};
 
 use llm_relay::{
     build_app, build_http_client,
@@ -7,6 +12,8 @@ use llm_relay::{
 };
 use tokio::{net::TcpListener, runtime::Builder};
 use tracing::info;
+
+const DEFAULT_CONFIG_PATH: &str = "/etc/llm-relay/config.yaml";
 
 fn main() {
     if let Err(error) = run() {
@@ -17,14 +24,14 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     match parse_command()? {
-        Command::Run { config_path } => run_server(config_path),
+        Command::Run { paths } => run_server(paths),
         Command::Start => run_service_command("start"),
         Command::Stop => run_service_command("stop"),
         Command::Restart => run_service_command("restart"),
         Command::Status => run_service_command("status"),
         Command::Logs => run_logs_command(),
-        Command::GenerateKey { config_path, force } => generate_key(config_path, force),
-        Command::ShowKey { config_path } => show_key(config_path),
+        Command::GenerateKey { paths, force } => generate_key(paths, force),
+        Command::ShowKey { paths } => show_key(paths),
         Command::Help => {
             print_help();
             Ok(())
@@ -32,10 +39,11 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 }
 
-fn run_server(config_path: PathBuf) -> Result<(), Box<dyn Error + Send + Sync>> {
+fn run_server(paths: CliPaths) -> Result<(), Box<dyn Error + Send + Sync>> {
     init_tracing();
 
-    let config = Config::load_from_path(&config_path)?;
+    let config_path = paths.config_path.clone();
+    let config = load_config(&paths)?;
     let api_key_path = config.security.api_key_file.clone();
     let api_key = load_or_create_api_key(&api_key_path)?;
     let worker_threads = config.runtime.worker_threads;
@@ -87,8 +95,8 @@ fn init_tracing() {
         .init();
 }
 
-fn generate_key(config_path: PathBuf, force: bool) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let config = Config::load_from_path(config_path)?;
+fn generate_key(paths: CliPaths, force: bool) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let config = load_config(&paths)?;
     let path = config.security.api_key_file;
     let key = if force {
         generate_and_store_api_key(&path)?
@@ -104,8 +112,8 @@ fn generate_key(config_path: PathBuf, force: bool) -> Result<(), Box<dyn Error +
     Ok(())
 }
 
-fn show_key(config_path: PathBuf) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let config = Config::load_from_path(config_path)?;
+fn show_key(paths: CliPaths) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let config = load_config(&paths)?;
     let path = config.security.api_key_file;
     let key = read_api_key(&path)?;
     println!("{key}");
@@ -137,23 +145,34 @@ fn run_logs_command() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum Command {
-    Run { config_path: PathBuf },
+    Run { paths: CliPaths },
     Start,
     Stop,
     Restart,
     Status,
     Logs,
-    GenerateKey { config_path: PathBuf, force: bool },
-    ShowKey { config_path: PathBuf },
+    GenerateKey { paths: CliPaths, force: bool },
+    ShowKey { paths: CliPaths },
     Help,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CliPaths {
+    config_path: PathBuf,
+    api_key_file: Option<PathBuf>,
 }
 
 fn parse_command() -> Result<Command, Box<dyn Error + Send + Sync>> {
     let args: Vec<String> = env::args().skip(1).collect();
+    parse_command_args(&args)
+}
+
+fn parse_command_args(args: &[String]) -> Result<Command, Box<dyn Error + Send + Sync>> {
     let Some(command) = args.first().map(String::as_str) else {
         return Ok(Command::Run {
-            config_path: parse_config_path(&[])?,
+            paths: parse_paths(&[])?,
         });
     };
 
@@ -164,7 +183,7 @@ fn parse_command() -> Result<Command, Box<dyn Error + Send + Sync>> {
                 Ok(Command::Help)
             } else {
                 Ok(Command::Run {
-                    config_path: parse_config_path(&args[1..])?,
+                    paths: parse_paths(&args[1..])?,
                 })
             }
         }
@@ -179,7 +198,7 @@ fn parse_command() -> Result<Command, Box<dyn Error + Send + Sync>> {
             } else {
                 let (config_args, force) = split_force_flag(&args[1..])?;
                 Ok(Command::GenerateKey {
-                    config_path: parse_config_path(&config_args)?,
+                    paths: parse_paths(&config_args)?,
                     force,
                 })
             }
@@ -189,16 +208,20 @@ fn parse_command() -> Result<Command, Box<dyn Error + Send + Sync>> {
                 Ok(Command::Help)
             } else {
                 Ok(Command::ShowKey {
-                    config_path: parse_config_path(&args[1..])?,
+                    paths: parse_paths(&args[1..])?,
                 })
             }
         }
-        "-c" | "--config" => {
+        value
+            if matches!(value, "-c" | "--config" | "--api-key-file")
+                || value.starts_with("--config=")
+                || value.starts_with("--api-key-file=") =>
+        {
             if contains_help_flag(&args) {
                 Ok(Command::Help)
             } else {
                 Ok(Command::Run {
-                    config_path: parse_config_path(&args)?,
+                    paths: parse_paths(args)?,
                 })
             }
         }
@@ -238,8 +261,8 @@ fn contains_help_flag(args: &[String]) -> bool {
         .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
 }
 
-fn parse_config_path(args: &[String]) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
-    let mut config_path = default_config_path();
+fn parse_paths(args: &[String]) -> Result<CliPaths, Box<dyn Error + Send + Sync>> {
+    let mut paths = default_paths();
     let mut index = 0;
 
     while index < args.len() {
@@ -249,34 +272,65 @@ fn parse_config_path(args: &[String]) -> Result<PathBuf, Box<dyn Error + Send + 
                 let Some(value) = args.get(index) else {
                     return Err("missing value after --config".into());
                 };
-                config_path = PathBuf::from(value);
+                paths.config_path = PathBuf::from(value);
             }
             value if value.starts_with("--config=") => {
                 let value = value.trim_start_matches("--config=");
                 if value.is_empty() {
                     return Err("missing value after --config=".into());
                 }
-                config_path = PathBuf::from(value);
+                paths.config_path = PathBuf::from(value);
             }
-            "--help" | "-h" => return Ok(config_path),
+            "--api-key-file" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err("missing value after --api-key-file".into());
+                };
+                paths.api_key_file = Some(PathBuf::from(value));
+            }
+            value if value.starts_with("--api-key-file=") => {
+                let value = value.trim_start_matches("--api-key-file=");
+                if value.is_empty() {
+                    return Err("missing value after --api-key-file=".into());
+                }
+                paths.api_key_file = Some(PathBuf::from(value));
+            }
+            "--help" | "-h" => return Ok(paths),
             other => return Err(format!("unknown option: {other}").into()),
         }
         index += 1;
     }
 
-    Ok(config_path)
+    Ok(paths)
 }
 
-fn default_config_path() -> PathBuf {
-    if let Some(path) = env::var_os("LLM_RELAY_CONFIG") {
-        return PathBuf::from(path);
+fn default_paths() -> CliPaths {
+    CliPaths {
+        config_path: env::var_os("LLM_RELAY_CONFIG")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH)),
+        api_key_file: env::var_os("LLM_RELAY_API_KEY_FILE").map(PathBuf::from),
+    }
+}
+
+fn load_config(paths: &CliPaths) -> Result<Config, Box<dyn Error + Send + Sync>> {
+    let mut config = Config::load_from_path(&paths.config_path)?;
+
+    if let Some(api_key_file) = &paths.api_key_file {
+        config.security.api_key_file = resolve_key_path(&paths.config_path, api_key_file);
     }
 
-    let installed_path = PathBuf::from("/etc/llm-relay/config.yaml");
-    if installed_path.exists() {
-        installed_path
+    Ok(config)
+}
+
+fn resolve_key_path(config_path: &Path, api_key_file: &Path) -> PathBuf {
+    if api_key_file.is_absolute() {
+        api_key_file.to_path_buf()
     } else {
-        PathBuf::from("config/config.yaml")
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(api_key_file)
     }
 }
 
@@ -286,7 +340,7 @@ fn print_help() {
 LLM Relay
 
 Usage:
-  llm-relay [run] [--config <path>]
+  llm-relay [run] [--config <path>] [--api-key-file <path>]
   llm-relay <command>
 
 Commands:
@@ -301,11 +355,87 @@ Commands:
 
 Options:
   -c, --config <path>           Configuration file path
+      --api-key-file <path>     Override the relay API key storage path
   -h, --help                    Show this help
+
+Defaults:
+  Config: /etc/llm-relay/config.yaml
+  Key:    security.api_key_file from the selected config
+  Env:    LLM_RELAY_CONFIG and LLM_RELAY_API_KEY_FILE override these defaults
 
 Client authentication:
   Put the relay key in the proxy URL:
   /proxy/<relay-api-key>/<provider>/<provider-path>
 "
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_paths_for_direct_run_options() {
+        let command = parse_command_args(&args(&[
+            "--config=/tmp/relay/config.yaml",
+            "--api-key-file=keys/relay.key",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            command,
+            Command::Run {
+                paths: CliPaths {
+                    config_path: PathBuf::from("/tmp/relay/config.yaml"),
+                    api_key_file: Some(PathBuf::from("keys/relay.key")),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn parses_generate_key_with_custom_paths() {
+        let command = parse_command_args(&args(&[
+            "generate-key",
+            "--force",
+            "--config",
+            "/tmp/relay/config.yaml",
+            "--api-key-file",
+            "/var/lib/llm-relay/api_key",
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            command,
+            Command::GenerateKey {
+                paths: CliPaths {
+                    config_path: PathBuf::from("/tmp/relay/config.yaml"),
+                    api_key_file: Some(PathBuf::from("/var/lib/llm-relay/api_key")),
+                },
+                force: true,
+            }
+        );
+    }
+
+    #[test]
+    fn resolves_relative_key_paths_beside_the_config() {
+        assert_eq!(
+            resolve_key_path(
+                Path::new("/etc/llm-relay/config.yaml"),
+                Path::new("custom-api-key")
+            ),
+            PathBuf::from("/etc/llm-relay/custom-api-key")
+        );
+        assert_eq!(
+            resolve_key_path(
+                Path::new("/etc/llm-relay/config.yaml"),
+                Path::new("/var/lib/llm-relay/api_key")
+            ),
+            PathBuf::from("/var/lib/llm-relay/api_key")
+        );
+    }
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
 }

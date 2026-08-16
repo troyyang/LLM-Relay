@@ -6,10 +6,15 @@ PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 PACKAGE_NAME="llm-relay"
 VERSION="${VERSION:-}"
+TARGET_SUPPLIED=0
+if [[ -n "${TARGET+x}" ]]; then
+  TARGET_SUPPLIED=1
+fi
 TARGET="${TARGET:-x86_64-unknown-linux-musl}"
 DEB_ARCH="${DEB_ARCH:-amd64}"
 BUILD_DIR="${BUILD_DIR:-${PROJECT_ROOT}/target/package}"
 SKIP_BUILD=0
+ORIGINAL_ARGS=("$@")
 
 usage() {
   cat <<USAGE
@@ -35,6 +40,83 @@ Output:
 USAGE
 }
 
+run_in_docker() {
+  local platform
+  local docker_build_dir
+  local docker_image="rust:1-bookworm"
+  local docker_host_target
+  local docker_target="${TARGET}"
+
+  case "${DEB_ARCH}" in
+    amd64)
+      platform="linux/amd64"
+      ;;
+    arm64)
+      platform="linux/arm64"
+      ;;
+    *)
+      echo "dpkg-deb is unavailable and Docker packaging supports only amd64 or arm64." >&2
+      echo "Install dpkg-deb on a Debian-based Linux host to package ${DEB_ARCH}." >&2
+      exit 1
+      ;;
+  esac
+
+  case "${BUILD_DIR}" in
+    "${PROJECT_ROOT}"/*)
+      docker_build_dir="/work/${BUILD_DIR#"${PROJECT_ROOT}/"}"
+      ;;
+    *)
+      echo "BUILD_DIR must be within the project root when packaging with Docker." >&2
+      exit 1
+      ;;
+  esac
+
+  if ! docker run --rm --platform "${platform}" "${docker_image}" \
+    sh -c 'command -v rustup >/dev/null 2>&1'; then
+    if [[ "${TARGET_SUPPLIED}" -eq 0 && "${TARGET}" == "x86_64-unknown-linux-musl" && "${DEB_ARCH}" == "amd64" ]]; then
+      docker_target="x86_64-unknown-linux-gnu"
+      echo "Docker image has no rustup; using its native ${docker_target} target."
+    else
+      docker_host_target="$(docker run --rm --platform "${platform}" "${docker_image}" \
+        rustc -vV | awk '/^host:/ { print $2; exit }')"
+      if [[ "${TARGET}" != "${docker_host_target}" ]]; then
+        echo "Docker image has no rustup and cannot install requested target ${TARGET}." >&2
+        echo "Use a native GNU/Linux target or package on a host with rustup installed." >&2
+        exit 1
+      fi
+    fi
+  fi
+
+  docker_package() {
+    exec docker run --rm \
+      --platform "${platform}" \
+      -v "${PROJECT_ROOT}:/work" \
+      -w /work \
+      -e "VERSION=${VERSION}" \
+      -e "TARGET=${docker_target}" \
+      -e "DEB_ARCH=${DEB_ARCH}" \
+      -e "BUILD_DIR=${docker_build_dir}" \
+      "${docker_image}" \
+      bash -lc '
+        set -e
+        export PATH=/usr/local/cargo/bin:$PATH
+        apt-get update
+        apt-get install -y --no-install-recommends dpkg-dev musl-tools
+        if command -v rustup >/dev/null 2>&1; then
+          rustup target add "${TARGET:-x86_64-unknown-linux-musl}"
+        fi
+        exec ./scripts/package-deb.sh "$@"
+      ' llm-relay-package-deb "$@"
+  }
+
+  echo "dpkg-deb is unavailable; building the Debian package in Docker (${platform})."
+  if [[ "${#ORIGINAL_ARGS[@]}" -eq 0 ]]; then
+    docker_package
+  else
+    docker_package "${ORIGINAL_ARGS[@]}"
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
@@ -51,6 +133,7 @@ while [[ $# -gt 0 ]]; do
         echo "missing value after --target" >&2
         exit 1
       fi
+      TARGET_SUPPLIED=1
       shift 2
       ;;
     --arch)
@@ -84,11 +167,15 @@ require_command() {
   fi
 }
 
-require_command cargo
-require_command dpkg-deb
-require_command rustc
-
 cd "${PROJECT_ROOT}"
+
+if ! command -v dpkg-deb >/dev/null 2>&1; then
+  require_command docker
+  run_in_docker
+fi
+
+require_command cargo
+require_command rustc
 
 if [[ -z "${VERSION}" ]]; then
   VERSION="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
@@ -161,16 +248,36 @@ cat >"${PACKAGE_ROOT}/DEBIAN/postinst" <<'POSTINST'
 #!/usr/bin/env sh
 set -e
 
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl daemon-reload || true
+if ! getent group llm-relay >/dev/null 2>&1; then
+  groupadd --system llm-relay
 fi
 
-echo "llm-relay installed."
-echo "Generate or view the relay API key with:"
-echo "  sudo llm-relay generate-key --config /etc/llm-relay/config.yaml"
-echo "  sudo llm-relay show-key --config /etc/llm-relay/config.yaml"
-echo "Start the service with:"
-echo "  sudo systemctl enable --now llm-relay"
+install -d -o root -g llm-relay -m 0750 /etc/llm-relay
+chown root:llm-relay /etc/llm-relay/config.yaml
+chmod 0640 /etc/llm-relay/config.yaml
+
+/usr/local/bin/llm-relay generate-key --config /etc/llm-relay/config.yaml >/dev/null
+chown root:llm-relay /etc/llm-relay/api_key
+chmod 0640 /etc/llm-relay/api_key
+
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ] && id "${SUDO_USER}" >/dev/null 2>&1; then
+  usermod -a -G llm-relay "${SUDO_USER}"
+  echo "Added ${SUDO_USER} to the llm-relay group."
+  echo "Sign out and back in before running llm-relay show-key without sudo."
+else
+  echo "To run llm-relay show-key without sudo, add the operator to the llm-relay group:"
+  echo "  sudo usermod -aG llm-relay <user>"
+fi
+
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+  systemctl daemon-reload
+  systemctl enable llm-relay.service
+  systemctl start llm-relay.service
+  echo "llm-relay installed, enabled, and started."
+else
+  echo "llm-relay installed. systemd is not running; start it with:"
+  echo "  sudo systemctl enable --now llm-relay"
+fi
 POSTINST
 
 cat >"${PACKAGE_ROOT}/DEBIAN/postrm" <<'POSTRM'

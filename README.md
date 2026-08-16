@@ -68,8 +68,20 @@ buffering the complete response.
 
 ## Configuration
 
-The default config is `config/config.yaml`. You can also set
-`LLM_RELAY_CONFIG=/path/to/config.yaml`.
+The installed `llm-relay` command and `llm-relay.service` both use
+`/etc/llm-relay/config.yaml` by default. The bundled configuration stores its
+key at `/etc/llm-relay/api_key`. The package restricts key access to `root` and
+the `llm-relay` operator group.
+
+For a source checkout, pass the bundled configuration explicitly:
+
+```bash
+cargo run -- --config config/config.yaml
+cargo run -- show-key --config config/config.yaml
+```
+
+Set `LLM_RELAY_CONFIG=/path/to/config.yaml` to use a custom configuration
+without repeating `--config`.
 
 Key settings:
 
@@ -81,6 +93,11 @@ Key settings:
 - `security.api_key_file`: local file used to persist the relay API key. Relative
   paths are resolved beside the configuration file.
 - `providers`: allowlisted provider base URLs.
+
+Use `--api-key-file /path/to/api_key` or
+`LLM_RELAY_API_KEY_FILE=/path/to/api_key` to override key storage for `run`,
+`generate-key`, and `show-key`. Relative command-line key paths are resolved
+beside the selected config file.
 
 On first startup, the relay generates a 256-bit API key using the operating
 system random source and stores it with restrictive permissions. Proxy requests
@@ -116,7 +133,22 @@ Debian/Ubuntu package:
 ```bash
 rustup target add x86_64-unknown-linux-musl
 scripts/package-deb.sh
-sudo apt install ./target/package/llm-relay_0.1.0_amd64.deb
+sudo apt install ./target/package/llm-relay_0.1.1_amd64.deb
+```
+
+On macOS and other hosts without `dpkg-deb`, the packaging script uses Docker
+automatically. Install and start Docker Desktop, then run the same command.
+
+The installer generates the relay API key, installs `llm-relay.service`, and
+enables and starts it automatically when systemd is running. View the generated
+key with `sudo llm-relay show-key --config /etc/llm-relay/config.yaml`.
+
+When the package is installed through `sudo`, it adds the invoking user to the
+`llm-relay` group. Sign out and back in before running `llm-relay show-key`
+without `sudo`. To authorize another operator:
+
+```bash
+sudo usermod -aG llm-relay <user>
 ```
 
 ## Installed Commands
@@ -137,12 +169,13 @@ Key management:
 ```bash
 sudo llm-relay generate-key --force
 sudo llm-relay restart
-export LLM_RELAY_API_KEY="$(sudo llm-relay show-key)"
+export LLM_RELAY_API_KEY="$(llm-relay show-key)"
 ```
 
 Use `--config /path/to/config.yaml` with `run`, `generate-key`, or
-`show-key` when the configuration is not at `/etc/llm-relay/config.yaml` or
-`config/config.yaml`.
+`show-key` when the configuration is not at `/etc/llm-relay/config.yaml`.
+Use `--api-key-file /path/to/api_key` when the key location must differ from
+`security.api_key_file` in that configuration.
 
 ## Test
 

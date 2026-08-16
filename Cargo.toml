@@ -1,6 +1,6 @@
 [package]
 name = "llm-relay"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 description = "Lightweight provider-allowlisted HTTP relay for LLM APIs"

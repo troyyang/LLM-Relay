@@ -385,6 +385,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn forwards_cloudflare_gateway_auth_header() {
+        let upstream_addr = spawn_upstream().await;
+        let app = test_app_with_provider("cloudflare", format!("http://{upstream_addr}"), 4);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/proxy/test-relay-key/cloudflare/chat/completions")
+                    .header("cf-aig-authorization", "Bearer cloudflare-key")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"model":"google-ai-studio/gemini-3.6-flash"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(
+            response.headers().get("x-seen-cf-aig-auth").unwrap(),
+            "Bearer cloudflare-key"
+        );
+    }
+
+    #[tokio::test]
     async fn rejects_unknown_provider() {
         let app = test_app("http://127.0.0.1:1".into(), 4);
 
@@ -470,6 +497,12 @@ mod tests {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_owned();
+        let cf_aig_auth = request
+            .headers()
+            .get("cf-aig-authorization")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_owned();
         let request_id = request
             .headers()
             .get("x-request-id")
@@ -496,6 +529,7 @@ mod tests {
             .header("x-seen-method", method)
             .header("x-seen-uri", uri)
             .header("x-seen-auth", auth)
+            .header("x-seen-cf-aig-auth", cf_aig_auth)
             .header("x-seen-request-id", request_id)
             .header("x-seen-relay-key", relay_key)
             .header("x-seen-api-key", api_key)
@@ -504,9 +538,17 @@ mod tests {
     }
 
     fn test_app(base_url: String, max_concurrent_requests: usize) -> Router {
+        test_app_with_provider("openai", base_url, max_concurrent_requests)
+    }
+
+    fn test_app_with_provider(
+        provider_name: &str,
+        base_url: String,
+        max_concurrent_requests: usize,
+    ) -> Router {
         let mut providers = BTreeMap::new();
         providers.insert(
-            "openai".into(),
+            provider_name.into(),
             ProviderConfig {
                 base_url,
                 allow_private: true,

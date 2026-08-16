@@ -63,6 +63,40 @@ curl \
   -d '{"model":"google/gemini-2.5-flash","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
+Cloudflare AI Gateway example:
+
+```bash
+curl --fail-with-body -sS \
+  "http://localhost:5017/proxy/${LLM_RELAY_API_KEY}/cloudflare/chat/completions" \
+  -H "cf-aig-authorization: Bearer ${CLOUDFLARE_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "google-ai-studio/gemini-3.6-flash",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a professional, accurate and concise assistant."
+      },
+      {
+        "role": "user",
+        "content": "What model are you?"
+      }
+    ],
+    "temperature": 0.7,
+    "max_tokens": 1024,
+    "stream": false
+  }'
+```
+
+The bundled `cloudflare` provider maps that relay URL to:
+
+```text
+https://gateway.ai.cloudflare.com/v1/76dd9c787c6bfbe1ee972e6096618ae9/wispmemo-llm/compat/chat/completions
+```
+
+The relay forwards Cloudflare's `cf-aig-authorization` header unchanged and
+does not forward the relay API key upstream.
+
 Streaming requests use the same endpoint; response bytes are relayed without
 buffering the complete response.
 

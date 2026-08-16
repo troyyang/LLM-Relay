@@ -49,6 +49,15 @@ providers:
   openrouter:
     base_url: "https://openrouter.ai"
 
+  # Cloudflare AI Gateway OpenAI-compatible endpoint.
+  # Forward caller header:
+  #   cf-aig-authorization: Bearer <CLOUDFLARE_API_KEY>
+  # The relay keeps that header intact and forwards it upstream.
+  # Example relay path:
+  #   /proxy/<relay-key>/cloudflare/chat/completions
+  cloudflare:
+    base_url: "https://gateway.ai.cloudflare.com/v1/76dd9c787c6bfbe1ee972e6096618ae9/wispmemo-llm/compat"
+
   # Example relay path:
   #   /proxy/<relay-key>/deepseek/chat/completions
   deepseek:

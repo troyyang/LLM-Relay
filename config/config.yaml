@@ -1,0 +1,116 @@
+server:
+  host: "0.0.0.0"
+  port: 5017
+  max_body_size: "8MB"
+  max_concurrent_requests: 800
+  retry_after_seconds: 1
+
+runtime:
+  worker_threads: 2
+
+timeout:
+  connect: 10
+  request: 300
+
+pool:
+  max_idle_per_host: 8
+  idle_timeout: 30
+
+security:
+  api_key_file: "api_key"
+
+# Optional outbound proxy. Supported schemes: http, https, socks5, socks5h.
+# proxy:
+#   url: "socks5h://127.0.0.1:1080"
+
+providers:
+  # Direct first-party APIs.
+  # Example relay path:
+  #   /proxy/<relay-key>/openai/v1/chat/completions
+  openai:
+    base_url: "https://api.openai.com"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/anthropic/v1/messages
+  anthropic:
+    base_url: "https://api.anthropic.com"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/gemini/v1beta/models/gemini-2.5-flash:generateContent
+  gemini:
+    base_url: "https://generativelanguage.googleapis.com"
+
+  # OpenAI-compatible or OpenAI-adjacent public APIs.
+  # The relay stays transparent, so the path after the provider name must match
+  # each provider's public HTTP API shape.
+  #
+  # Example relay path:
+  #   /proxy/<relay-key>/openrouter/api/v1/chat/completions
+  openrouter:
+    base_url: "https://openrouter.ai"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/deepseek/chat/completions
+  deepseek:
+    base_url: "https://api.deepseek.com"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/xai/v1/chat/completions
+  xai:
+    base_url: "https://api.x.ai"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/groq/v1/chat/completions
+  groq:
+    base_url: "https://api.groq.com/openai"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/mistral/v1/chat/completions
+  mistral:
+    base_url: "https://api.mistral.ai"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/cohere/v2/chat
+  cohere:
+    base_url: "https://api.cohere.com"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/perplexity/v1/sonar
+  perplexity:
+    base_url: "https://api.perplexity.ai"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/together/v1/chat/completions
+  together:
+    base_url: "https://api.together.ai"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/fireworks/v1/chat/completions
+  fireworks:
+    base_url: "https://api.fireworks.ai/inference"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/cerebras/v1/chat/completions
+  cerebras:
+    base_url: "https://api.cerebras.ai"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/nvidia/v1/chat/completions
+  nvidia:
+    base_url: "https://integrate.api.nvidia.com"
+
+  # Example relay path:
+  #   /proxy/<relay-key>/poe/v1/chat/completions
+  poe:
+    base_url: "https://api.poe.com"
+
+  # Account/resource-specific examples. Uncomment and replace placeholders.
+  #
+  # azure-openai:
+  #   base_url: "https://YOUR-RESOURCE.openai.azure.com/openai"
+  #
+  # cloudflare-workers-ai:
+  #   base_url: "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai"
+  #
+  # cloudflare-ai-gateway:
+  #   base_url: "https://gateway.ai.cloudflare.com/v1/YOUR_ACCOUNT_ID/YOUR_GATEWAY"

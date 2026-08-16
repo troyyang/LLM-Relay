@@ -1,0 +1,23 @@
+[Unit]
+Description=Rust LLM HTTP Relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/llm-relay --config /etc/llm-relay/config.yaml
+Restart=on-failure
+RestartSec=2
+
+MemoryMax=350M
+MemoryHigh=300M
+TasksMax=512
+Environment=MALLOC_ARENA_MAX=1
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

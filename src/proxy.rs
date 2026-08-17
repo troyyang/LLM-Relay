@@ -384,6 +384,29 @@ mod tests {
         assert_eq!(&body[..], br#"{"stream":true}"#);
     }
 
+    #[test]
+    fn builds_cloudflare_gateway_target_url() {
+        let provider = ProviderConfig {
+            base_url: "https://gateway.ai.cloudflare.com".into(),
+            allow_private: false,
+        };
+        let uri: Uri = "/proxy/test-relay-key/cloudflare/v1/account/gateway/compat/chat/completions?stream=true"
+            .parse()
+            .unwrap();
+
+        let target = build_target_url(
+            &provider,
+            "v1/account/gateway/compat/chat/completions",
+            &uri,
+        )
+        .unwrap();
+
+        assert_eq!(
+            target,
+            "https://gateway.ai.cloudflare.com/v1/account/gateway/compat/chat/completions?stream=true"
+        );
+    }
+
     #[tokio::test]
     async fn forwards_cloudflare_gateway_auth_header() {
         let upstream_addr = spawn_upstream().await;

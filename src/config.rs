@@ -346,6 +346,15 @@ fn validate_provider_url(name: &str, provider: &ProviderConfig) -> Result<(), Co
         )));
     }
 
+    if name == "cloudflare"
+        && parsed.host_str() == Some("gateway.ai.cloudflare.com")
+        && parsed.path().trim_matches('/').is_empty() == false
+    {
+        return Err(ConfigError::Validation(
+            "providers.cloudflare.base_url must be https://gateway.ai.cloudflare.com; put /v1/<account-id>/<gateway-name>/compat/... in the relay request path".into(),
+        ));
+    }
+
     if !provider.allow_private && is_private_target(&parsed) {
         return Err(ConfigError::Validation(format!(
             "providers.{name}.base_url points to a private or local target; set allow_private: true only for intentional private upstreams"
@@ -419,7 +428,28 @@ providers:
     #[test]
     fn checked_in_config_is_valid() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/config.yaml");
-        Config::load_from_path(path).unwrap();
+        let config = Config::load_from_path(path).unwrap();
+
+        assert_eq!(
+            config.providers["cloudflare"].base_url,
+            "https://gateway.ai.cloudflare.com"
+        );
+    }
+
+    #[test]
+    fn rejects_cloudflare_gateway_base_url_with_embedded_path() {
+        let config: Config = serde_yaml::from_str(
+            r#"
+providers:
+  cloudflare:
+    base_url: "https://gateway.ai.cloudflare.com/v1/account/gateway/compat"
+"#,
+        )
+        .unwrap();
+
+        let error = config.validate().unwrap_err().to_string();
+        assert!(error
+            .contains("providers.cloudflare.base_url must be https://gateway.ai.cloudflare.com"));
     }
 
     #[test]

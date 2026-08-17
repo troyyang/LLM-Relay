@@ -67,11 +67,11 @@ Cloudflare AI Gateway example:
 
 ```bash
 curl --fail-with-body -sS \
-  "http://localhost:5017/proxy/${LLM_RELAY_API_KEY}/cloudflare/chat/completions" \
+  "http://localhost:5017/proxy/${LLM_RELAY_API_KEY}/cloudflare/v1/${CLOUDFLARE_ACCOUNT}/wispmemo-llm/compat/chat/completions" \
   -H "cf-aig-authorization: Bearer ${CLOUDFLARE_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "google-ai-studio/gemini-3.6-flash",
+    "model": "google-ai-studio/gemini-3.7-flash",
     "messages": [
       {
         "role": "system",
@@ -91,7 +91,7 @@ curl --fail-with-body -sS \
 The bundled `cloudflare` provider maps that relay URL to:
 
 ```text
-https://gateway.ai.cloudflare.com/v1/76dd9c787c6bfbe1ee972e6096618ae9/wispmemo-llm/compat/chat/completions
+https://gateway.ai.cloudflare.com/v1/${CLOUDFLARE_ACCOUNT}/wispmemo-llm/compat/chat/completions
 ```
 
 The relay forwards Cloudflare's `cf-aig-authorization` header unchanged and
